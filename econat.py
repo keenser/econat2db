@@ -6,15 +6,16 @@ import socket
 from collections import namedtuple
 import time
 import logging
+import logging.handlers
 import json
 
 version = "1.0-0"
 servicename = "econat"
 servicedesc = "econat activator"
 
-class User(namedtuple('User', ('id', 'ip', 'speed', 'service', 'port'))):
-    def __new__(cls, id=None, ip=None, speed=None, service=None, port=None):
-        return super(User, cls).__new__(cls, id, ip, speed, service, port) 
+class User(namedtuple('User', ('id', 'ip', 'speed', 'service', 'port', 'status'))):
+    def __new__(cls, id=None, ip=None, speed=None, service=None, port=None, status=None):
+        return super(User, cls).__new__(cls, id, ip, speed, service, port, status)
 
 def dict_compare(d1, d2):
     d1_keys = set(d1.keys())
@@ -28,16 +29,16 @@ def dict_compare(d1, d2):
 import aiopg
 import psycopg2
 class DbInfo:
-"""
-radius=> select * from active_users;
- id |     ip     |  speed   | service |                port                
-----+------------+----------+---------+------------------------------------
-  1 | 100.64.1.3 | 20971520 | 20Mbit  | eltex-1-1 eth 100/2:100
-  2 | 100.64.3.2 | 10485760 | 10Mbit  | eltex-1-1 eth 100/1:100
-  2 | 100.64.1.4 | 10485760 | 10Mbit  | eltex-1-1 eth 100/1:100
-  3 | 100.64.2.2 | 20971520 | 20Mbit  | access-1 GigabitEthernet0/0/21:100
-"""
-    def __init__(self, loop, user='radius', password='radpass', dbname='radius'):
+    """
+    radius=> select * from active_users;
+     id |     ip     |  speed   | service |                port                | status
+    ----+------------+----------+---------+------------------------------------+--------
+      1 | 100.64.1.3 | 20971520 | 20Mbit  | eltex-1-1 eth 100/2:100            | 1
+      2 | 100.64.3.2 | 10485760 | 10Mbit  | eltex-1-1 eth 100/1:100            | 1
+      2 | 100.64.1.4 | 10485760 | 10Mbit  | eltex-1-1 eth 100/1:100            | 1
+      3 | 100.64.2.2 | 20971520 | 20Mbit  | access-1 GigabitEthernet0/0/21:100 | 0
+    """
+    def __init__(self, loop, user='radius', password='radius', dbname='radius'):
         self.logid = 'DbInfo'
         self.log = logging.getLogger(self.logid)
 
@@ -76,21 +77,25 @@ radius=> select * from active_users;
             self.log.error('execute: %s %s', query, e)
 
     async def listen(self):
-        try:
-            async with self.connect() as db:
-                self.log.info('listen econat_notify')
-                async with db.cursor() as cur:
-                    await cur.execute("LISTEN econat_notify")
-                    while True:
-                        msg = await db.notifies.get()
-                        self.log.log(1, '%s', msg)
-                        try:
-                            command = json.loads(msg.payload)
-                            await self.queue.put(command)
-                        except json.decoder.JSONDecodeError as e:
-                            self.log.error('receive %s %s', e, data)
-        except psycopg2.Error as e:
-            self.log.error('listen: %s', e)
+        while True:
+            try:
+                async with self.connect() as db:
+                    self.log.info('listen econat_notify')
+                    async with db.cursor() as cur:
+                        await cur.execute("LISTEN econat_notify")
+                        while True:
+                            msg = await db.notifies.get()
+                            self.log.log(1, '%s', msg)
+                            try:
+                                command = json.loads(msg.payload)
+                                await self.queue.put(command)
+                            except json.decoder.JSONDecodeError as e:
+                                self.log.error('receive %s %s', e, data)
+            except psycopg2.Error as e:
+                self.log.error('listen: %s', e)
+                await asyncio.sleep(10)
+            else:
+                break
 
     async def rid(self):
         data = await self.execute('select user_id, service_id from user_service where status = 1')
@@ -211,7 +216,7 @@ class RadiusHandler:
 class RadiusClient:
     raddict = dictionary.Dictionary("/usr/share/freeradius/dictionary.rfc2865")
     user = namedtuple('User', ('ip'))
-    def __init__(self, loop, server='192.168.100.200', port=1813, secret=b''):
+    def __init__(self, loop, server='192.168.100.200', port=1812, secret=b''):
         self.loop = loop
         self.logid = 'RadiusClient'
         self.log = logging.getLogger(self.logid)
@@ -323,8 +328,8 @@ class Communicator:
         self.queuetask = None
         self.queue = asyncio.Queue()
 
-        #self.nat = EcoNat(loop, server='192.168.10.4')
-        self.nat = RadiusClient(loop, server = '192.168.10.4', secret = b'econat')
+        #self.nat = EcoNat(loop, server='192.168.100.200')
+        self.nat = RadiusClient(loop, server = '192.168.100.200', secret = b'econat')
         #self.db = TestUsers()
         self.db = DbInfo(loop)
         self.db.queue = self.queue
@@ -442,7 +447,7 @@ def getoptions():
         dest="logfile",
         nargs="?",
         help="log file, default: %(default)s, %(const)s if enabled",
-        const="/var/log/{0}".format(servicename)
+        const="/var/log/{0}.log".format(servicename)
     )
 
     parser.add_argument("-s", "--syslog",
@@ -477,6 +482,7 @@ def getoptions():
 import signal
 import os
 import sys
+import atexit
 class daemon:
     """A generic daemon class.
 
