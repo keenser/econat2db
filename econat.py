@@ -450,7 +450,7 @@ def getoptions():
         dest="logfile",
         nargs="?",
         help="log file, default: %(default)s, %(const)s if enabled",
-        const="/var/log/{0}.log".format(servicename)
+        const="/var/log/{0}/{0}.log".format(servicename)
     )
 
     parser.add_argument("-s", "--syslog",
@@ -464,7 +464,7 @@ def getoptions():
         dest="pid",
         nargs="?",
         help="pid file, default: %(default)s, %(const)s if enabled",
-        const="/var/run/{0}.pid".format(servicename)
+        const="/var/run/{0}/{0}.pid".format(servicename)
     )
 
     parser.add_argument("-f", "--foreground",
