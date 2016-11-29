@@ -320,7 +320,7 @@ class UnixSocket:
 #        self.__queue = queue
 
 class Communicator:
-    def __init__(self, loop):
+    def __init__(self, loop, options):
         self.logid = 'Communicator'
         self.log = logging.getLogger(self.logid)
 
@@ -328,14 +328,17 @@ class Communicator:
         self.queuetask = None
         self.queue = asyncio.Queue()
 
-        #self.nat = EcoNat(loop, server='192.168.100.200')
-        self.nat = RadiusClient(loop, server = '192.168.100.200', secret = b'econat')
-        #self.db = TestUsers()
-        self.db = DbInfo(loop)
+        if options.rid:
+            self.nat = EcoNat(loop, server=options.server)
+        else:
+            self.nat = RadiusClient(loop, server=options.server, port=options.port, secret=options.secret.encode())
+        self.db = DbInfo(loop, user=options.user, password=options.password, dbname=options.dbname)
         self.db.queue = self.queue
 
-        #self.ridtask = self.loop.create_task(self.rid())
-        self.ridtask = None
+        if options.rid:
+            self.ridtask = self.loop.create_task(self.rid())
+        else:
+            self.ridtask = None
 
     @property
     def queue(self):
@@ -477,6 +480,60 @@ def getoptions():
         default="/var/run/{0}/{0}.socket".format(servicename)
     )
 
+    group = parser.add_argument_group(
+        "econat server",
+        "econat server settings"
+    )
+
+    group.add_argument("--rid",
+        dest="rid",
+        action="store_true",
+        help="use RID insted of radius, default: use radius",
+        default=False
+    )
+
+    group.add_argument("--server",
+        dest="server",
+        help="econat server ip, default: %(default)s",
+        default="192.168.100.200"
+    )
+
+    group.add_argument("--port",
+        dest="port",
+        type=int,
+        help="econat server port, default: %(default)s",
+        default=1812
+    )
+
+    group.add_argument("--secret",
+        dest="secret",
+        help="econat radius coa_password, default: %(default)s",
+        default="radius"
+    )
+
+    group = parser.add_argument_group(
+        "database",
+        "Postgresql database connection settings"
+    )
+
+    group.add_argument("--user",
+        dest="user",
+        help="database user name, default: %(default)s",
+        default="radius"
+    )
+
+    group.add_argument("--password",
+        dest="password",
+        help="database password, default: %(default)s",
+        default="radius"
+    )
+
+    group.add_argument("--dbname",
+        dest="dbname",
+        help="database name to connect to, default: %(default)s",
+        default="radius"
+    )
+
     return parser.parse_args()
 
 import signal
@@ -616,7 +673,7 @@ def main():
 
     #fifo = UnixSocket(loop, file=options.pipe)
     #fifo = FifoPipe(loop, file=options.pipe)
-    com = Communicator(loop)
+    com = Communicator(loop, options)
     #fifo.queue = com.queue
 
     log.info('run loop')
