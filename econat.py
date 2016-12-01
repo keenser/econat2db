@@ -66,6 +66,7 @@ class DbInfo:
     def stop(self):
         if self.queuetask:
             self.queuetask.cancel()
+            self.loop.run_until_complete(asyncio.wait([self.queuetask]))
 
     async def execute(self, query, args=None):
         try:
@@ -77,24 +78,51 @@ class DbInfo:
             self.log.error('execute: %s %s', query, e)
 
     async def listen(self):
+        async def wd(db):
+            self.log.info("start econat_notify watchdog")
+            while True:
+                if db.closed:
+                        self.log.info("wd: db colsed %s", db.closed)
+                        raise Exception("db reconnect")
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    self.log.error('wd: cancelled')
+                    break
+
+        async def l(db):
+            async with db.cursor() as cur:
+                await cur.execute("LISTEN econat_notify")
+                while True:
+                    try:
+                        msg = await db.notifies.get()
+                        self.log.log(1, '%s', msg)
+                        command = json.loads(msg.payload)
+                        await self.queue.put(command)
+                    except json.decoder.JSONDecodeError as e:
+                        self.log.error('l: receive %s %s', e, data)
+                    except asyncio.CancelledError:
+                        self.log.error('l: cancelled')
+                        break
+
         while True:
+            _wd = None
+            _l = None
             try:
                 async with self.connect() as db:
+                    _wd = asyncio.ensure_future(wd(db))
+                    _l = asyncio.ensure_future(l(db))
+                    _wd.add_done_callback(lambda fut: _l.cancel())
                     self.log.info('listen econat_notify')
-                    async with db.cursor() as cur:
-                        await cur.execute("LISTEN econat_notify")
-                        while True:
-                            msg = await db.notifies.get()
-                            self.log.log(1, '%s', msg)
-                            try:
-                                command = json.loads(msg.payload)
-                                await self.queue.put(command)
-                            except json.decoder.JSONDecodeError as e:
-                                self.log.error('receive %s %s', e, data)
+                    await asyncio.gather(_wd, _l)
             except psycopg2.Error as e:
                 self.log.error('listen: %s', e)
-                await asyncio.sleep(10)
+                await asyncio.sleep(1)
+            except Exception:
+                self.log.info('listen: db closed. Reconnecting')
+                await asyncio.sleep(1)
             else:
+                self.log.info('close econat_notify')
                 break
 
     async def rid(self):
