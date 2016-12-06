@@ -568,12 +568,15 @@ import signal
 import os
 import sys
 import atexit
+import setproctitle
 class daemon:
     """A generic daemon class.
 
     Usage: subclass the daemon class and override the run() method."""
 
-    def __init__(self, pidfile): self.pidfile = pidfile
+    def __init__(self, pidfile):
+        self.pidfile = pidfile
+        setproctitle.setproctitle(servicename)
 
     def daemonize(self, secondfork=False):
         """Deamonize class. UNIX double fork mechanism."""
