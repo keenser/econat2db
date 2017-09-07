@@ -259,9 +259,10 @@ class RadiusClient:
     async def processusers(self, action_users={}):
         for action, userlist in action_users.items():
             for user in userlist:
-                self.log.info('send radius_disconnect for %s', user.ip)
-                self.message['User-Name'] = user.ip
-                await self.loop.create_datagram_endpoint(lambda: RadiusHandler(self.loop, self.message), remote_addr=(self.server, self.port))
+                if user.ip:
+                    self.log.info('send radius_disconnect for %s', user.ip)
+                    self.message['User-Name'] = user.ip
+                    await self.loop.create_datagram_endpoint(lambda: RadiusHandler(self.loop, self.message), remote_addr=(self.server, self.port))
 
 import os
 class UnixSocket:
