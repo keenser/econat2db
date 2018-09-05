@@ -251,7 +251,6 @@ class RadiusClient:
         self.server = server
         self.port = port
         self.secret = secret
-        self.message = packet.AcctPacket(code=packet.DisconnectRequest, dict=self.raddict, secret=self.secret)
 
     def stop(self):
         pass
@@ -261,8 +260,9 @@ class RadiusClient:
             for user in userlist:
                 if user.ip:
                     self.log.info('send radius_disconnect for %s', user.ip)
-                    self.message['User-Name'] = user.ip
-                    await self.loop.create_datagram_endpoint(lambda: RadiusHandler(self.loop, self.message), remote_addr=(self.server, self.port))
+                    message = packet.AcctPacket(code=packet.DisconnectRequest, dict=self.raddict, secret=self.secret)
+                    message['User-Name'] = user.ip
+                    await self.loop.create_datagram_endpoint(lambda: RadiusHandler(self.loop, message), remote_addr=(self.server, self.port))
 
 import os
 class UnixSocket:
