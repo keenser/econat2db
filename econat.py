@@ -100,7 +100,7 @@ class DbInfo:
                         command = json.loads(msg.payload)
                         await self.queue.put(command)
                     except json.decoder.JSONDecodeError as e:
-                        self.log.error('l: receive %s %s', e, data)
+                        self.log.error('l: receive %s', e)
                     except asyncio.CancelledError:
                         self.log.error('l: cancelled')
                         break
@@ -118,12 +118,12 @@ class DbInfo:
             except psycopg2.Error as e:
                 self.log.error('listen: %s', e)
                 await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                self.log.info('close econat_notify')
+                break
             except Exception:
                 self.log.info('listen: db closed. Reconnecting')
                 await asyncio.sleep(1)
-            else:
-                self.log.info('close econat_notify')
-                break
 
     async def rid(self):
         data = await self.execute('select user_id, service_id from user_service where status = 1')
@@ -219,7 +219,7 @@ class RadiusHandler:
             if not self.data:
                 self.data = self.message.RequestPacket()
             self.transport.sendto(self.data)
-            self.scheduler = self.loop.call_later(2, self.send)
+            self.scheduler = self.loop.call_later(5, self.send)
         else:
             self.transport.close()
 
@@ -242,7 +242,7 @@ class RadiusHandler:
         self.log.debug("Socket closed")
 
 class RadiusClient:
-    raddict = dictionary.Dictionary("/usr/share/freeradius/dictionary.rfc2865")
+    raddict = dictionary.Dictionary("/opt/econat2db/dictionary.rfc2865")
     user = namedtuple('User', ('ip'))
     def __init__(self, loop, server='192.168.100.200', port=1812, secret=b''):
         self.loop = loop
