@@ -8,6 +8,14 @@ import time
 import logging
 import logging.handlers
 import json
+import daemon
+import daemon.pidfile
+import lockfile
+import signal
+import sys
+import setproctitle
+import aiopg
+import psycopg2
 
 version = "1.0-0"
 servicename = "econat"
@@ -26,8 +34,6 @@ def dict_compare(d1, d2):
     modified = {o for o in intersect_keys if d1[o] != d2[o]}
     return added, removed, modified
 
-import aiopg
-import psycopg2
 class DbInfo:
     """
     radius=> select * from active_users;
@@ -84,11 +90,7 @@ class DbInfo:
                 if db.closed:
                         self.log.info("wd: db colsed %s", db.closed)
                         raise Exception("db reconnect")
-                try:
-                    await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    self.log.error('wd: cancelled')
-                    break
+                await asyncio.sleep(1)
 
         async def l(db):
             async with db.cursor() as cur:
@@ -101,9 +103,6 @@ class DbInfo:
                         await self.queue.put(command)
                     except json.decoder.JSONDecodeError as e:
                         self.log.error('l: receive %s', e)
-                    except asyncio.CancelledError:
-                        self.log.error('l: cancelled')
-                        break
 
         while True:
             _wd = None
@@ -565,103 +564,27 @@ def getoptions():
 
     return parser.parse_args()
 
-import signal
-import os
-import sys
-import atexit
-import setproctitle
-class daemon:
-    """A generic daemon class.
-
-    Usage: subclass the daemon class and override the run() method."""
-
-    def __init__(self, pidfile):
-        self.pidfile = pidfile
-        setproctitle.setproctitle(servicename)
-
-    def daemonize(self, secondfork=False):
-        """Deamonize class. UNIX double fork mechanism."""
-
-        try:
-            pid = os.fork()
-            if pid > 0:
-                # exit first parent
-                sys.exit(0)
-        except OSError as err:
-            sys.stderr.write('fork #1 failed: {0}\n'.format(err))
-            sys.exit(1)
-
-        # decouple from parent environment
-        os.chdir('/')
-        os.setsid()
-        os.umask(0)
-
-        # do second fork
-        if secondfork:
-            try:
-                pid = os.fork()
-                if pid > 0:
-
-                    # exit from second parent
-                    sys.exit(0)
-            except OSError as err:
-                sys.stderr.write('fork #2 failed: {0}\n'.format(err))
-                sys.exit(1)
-
-        # write pidfile
-        try:
-            if self.pidfile:
-                pid = str(os.getpid())
-                with open(self.pidfile, 'w+') as f:
-                    f.write(pid + '\n')
-                atexit.register(self.delpid)
-        except PermissionError:
-            sys.stderr.write('can not write pidfile %s\n' % self.pidfile)
-            sys.exit(1)
-
-        # redirect standard file descriptors
-        sys.stdout.flush()
-        sys.stderr.flush()
-        si = open(os.devnull, 'r')
-        so = open(os.devnull, 'a+')
-        se = open(os.devnull, 'a+')
-
-        os.dup2(si.fileno(), sys.stdin.fileno())
-        os.dup2(so.fileno(), sys.stdout.fileno())
-        os.dup2(se.fileno(), sys.stderr.fileno())
-
-    def delpid(self):
-        os.remove(self.pidfile)
-
-    def start(self, foreground):
-        """Start the daemon."""
-
-        # Check for a pidfile to see if the daemon already runs
-        try:
-            with open(self.pidfile, 'r') as pf:
-                pid = int(pf.read().strip())
-        except (IOError, TypeError, ValueError):
-            pid = None
-
-        if pid:
-            message = "pidfile {0} already exist. " + \
-                    "Daemon already running?\n"
-            sys.stderr.write(message.format(self.pidfile))
-            sys.exit(1)
-
-        # catch TERM
-        signal.signal(signal.SIGTERM, lambda signum, stack_frame: sys.exit(0))
-
-        # Start the daemon
-        if not foreground:
-            self.daemonize()
 
 def main():
+    '''start service as daemon'''
     options = getoptions()
+    try:
+        setproctitle.setproctitle(servicename)
+        with daemon.DaemonContext(
+            pidfile = daemon.pidfile.PIDLockFile(options.pid) if options.pid else None,
+            signal_map = {signal.SIGTERM: lambda signum, stack_frame: sys.exit(0)},
+            detach_process = not options.foreground,
+            stdout = sys.stdout if options.foreground else None,
+            stderr = sys.stderr if options.foreground else None,
+            #uid = pwd.getpwnam(options.uid).pw_uid if options.uid else None,
+            #gid = grp.getgrnam(options.gid).gr_gid if options.gid else None,
+            files_preserve = [3] if 'LISTEN_FDNAMES' in os.environ else None,
+            ) as context:
+            _main(options)
+    except lockfile.LockFailed as ex:
+        sys.stderr.write("daemonize error: {}'\n".format(ex))
 
-    dm = daemon(options.pid)
-    dm.start(options.foreground)
-
+def _main(options):
     if options.verbosity > 3:
         options.verbosity = 3
 
