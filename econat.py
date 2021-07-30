@@ -460,7 +460,7 @@ class Communicator:
                     if action_users:
                         await self.nat.processusers(action_users)
             except Exception as e:
-                self.log.error('queueloop: %s', e)
+                self.log.exception('queueloop')
             self.log.log(1, 'queueloop done')
 
 def getoptions():
@@ -493,7 +493,7 @@ def getoptions():
         dest="pid",
         nargs="?",
         help="pid file, default: %(default)s, %(const)s if enabled",
-        const="/var/run/{0}/{0}.pid".format(servicename)
+        const="/run/{0}/{0}.pid".format(servicename)
     )
 
     parser.add_argument("-f", "--foreground",

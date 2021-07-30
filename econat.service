@@ -1,0 +1,19 @@
+[Unit]
+Description=isbot service
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=on-failure
+RuntimeDirectory=econat
+User=econat
+Group=econat
+PIDFile=/run/econat/econat.pid
+EnvironmentFile=-/etc/default/econat
+ExecStart=/opt/econat2db/econat.py -f -p $OPTIONS
+Environment=PYTHONUNBUFFERED=1
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
